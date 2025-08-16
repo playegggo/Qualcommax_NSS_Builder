@@ -1,4 +1,4 @@
-name: Build OpenWrt for specific target and release
+name: Build OpenWrt for AX3600 and AX9000
 
 permissions:
   contents: write
@@ -13,7 +13,8 @@ on:
 env:
   REMOTE_REPOSITORY: qosmio/openwrt-ipq
   REMOTE_BRANCH: main-nss
-  CONFIG_FILE: ax3600.config
+  CONFIG_AX3600: ax3600.config
+  CONFIG_AX9000: ax9000.config
   CUSTOM_FILES_PATH: files/
   RELEASE_PREFIX: main-nss
   NSS_PACKAGES_REPOSITORY: qosmio/nss-packages
@@ -54,6 +55,7 @@ jobs:
     steps:
       - name: Install dependencies
         run: sudo apt update && sudo apt install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib gettext git libncurses5-dev libssl-dev python3-setuptools rsync swig unzip zlib1g-dev file wget && sudo apt full-upgrade -y
+
       - name: Checkout remote repository
         uses: actions/checkout@v4
         with:
@@ -77,23 +79,35 @@ jobs:
       - name: Update and install feeds
         run: ./scripts/feeds update -a && ./scripts/feeds install -a
 
-      - name: Setup configuration and custom files
+      - name: Build AX3600
         run: |
-          mv builder_repo/${{ env.CONFIG_FILE }} .config
+          cp builder_repo/${{ env.CONFIG_AX3600 }} .config
           make defconfig -j$(nproc)
-          mkdir -p ${{ env.CUSTOM_FILES_PATH }}
-          [ -d "builder_repo/${{ env.CUSTOM_FILES_PATH }}" ] && mv builder_repo/${{ env.CUSTOM_FILES_PATH }}* ${{ env.CUSTOM_FILES_PATH }} || true
-
-      - name: Build firmware
-        run: |
           make download -j$(nproc) V=s
-          make -j$(nproc) || make -j1 V=s  # Retry single-threaded on failure
-
-      - name: Upload artifacts
+          make -j$(nproc) || make -j1 V=s
+      - name: Upload AX3600 artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ipq807x-images
-          path: bin/targets/qualcommax/ipq807x
+          name: ipq807x-images-ax3600
+          path: |
+            bin/targets/qualcommax/ipq807x/*ax3600*.bin
+            bin/targets/qualcommax/ipq807x/*ax3600*.img
+            bin/targets/qualcommax/ipq807x/*ax3600*.tar
+
+      - name: Build AX9000
+        run: |
+          cp builder_repo/${{ env.CONFIG_AX9000 }} .config
+          make defconfig -j$(nproc)
+          make download -j$(nproc) V=s
+          make -j$(nproc) || make -j1 V=s
+      - name: Upload AX9000 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipq807x-images-ax9000
+          path: |
+            bin/targets/qualcommax/ipq807x/*ax9000*.bin
+            bin/targets/qualcommax/ipq807x/*ax9000*.img
+            bin/targets/qualcommax/ipq807x/*ax9000*.tar
 
   release:
     name: Create release
@@ -101,17 +115,39 @@ jobs:
     if: needs.build.result == 'success'
     runs-on: ubuntu-24.04
     steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: ipq807x-images
-          path: firmware
       - name: Set release date
         run: echo "RELEASE_DATE=$(date +%F)" >> $GITHUB_ENV
+
+      - name: Download AX3600 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ipq807x-images-ax3600
+          path: firmware/ax3600
+
+      - name: Rename AX3600 files with prefix
+        run: |
+          for f in firmware/ax3600/*; do
+            mv "$f" "firmware/ax3600/ax3600-$(basename $f)"
+          done
+
+      - name: Download AX9000 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ipq807x-images-ax9000
+          path: firmware/ax9000
+
+      - name: Rename AX9000 files with prefix
+        run: |
+          for f in firmware/ax9000/*; do
+            mv "$f" "firmware/ax9000/ax9000-$(basename $f)"
+          done
+
       - name: Publish release
         uses: softprops/action-gh-release@master
         with:
-          files: firmware/*
+          files: |
+            firmware/ax3600/*
+            firmware/ax9000/*
           tag_name: ${{ env.RELEASE_PREFIX }}-${{ env.RELEASE_DATE }}
           name: 🚀 OpenWrt Build Release ${{ env.RELEASE_DATE }}
           body: |
@@ -130,8 +166,8 @@ jobs:
             **Commit:** `${{ needs.check_commits.outputs.nss_packages_repo_latest_commit_sha }}`
 
             ### 📝 Build Information
-            - **Target:** [Xiaomi Mi AIoT Router AX3600](https://openwrt.org/toh/xiaomi/ax3600)
-            - **Configuration:** [`${{ env.CONFIG_FILE }}`](${{ env.CONFIG_FILE }})
+            - **Target:** Xiaomi Mi AIoT Router AX3600 & AX9000
+            - **Configuration:** [`${{ env.CONFIG_AX3600 }}`](${env.CONFIG_AX3600}) & [`${{ env.CONFIG_AX9000 }}`](${env.CONFIG_AX9000})
 
             ### 📋 Notes
             - Automated build triggered by ${{ github.event_name }}
